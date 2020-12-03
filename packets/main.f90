@@ -39,7 +39,8 @@
              done = .false.
           endif
 
-          call MPI_TEST(ir(m),done,mpistat,ier)
+          !!!call MPI_TEST(ir(m),done,mpistat,ier)
+          call MPI_Request_get_status(ir(m),done,mpistat,ier)
           if (done) then
              PRINT*,'sent packet #',i
              ! free request?
@@ -69,8 +70,8 @@
             done = .false.
          endif
 
-         call MPI_TEST(ir(nproc+m),done,mpistat,ier)
-
+         !!!call MPI_TEST(ir(nproc+m),done,mpistat,ier)
+         call MPI_Request_get_status(ir(nproc+m),done,mpistat,ier)
          if (done) then
             ! free request?
             PRINT*,'received packet #',i
