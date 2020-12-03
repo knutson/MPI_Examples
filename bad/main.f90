@@ -46,18 +46,21 @@
          done = .true. ! unless any messages have not been received 
 
          do m=0,nproc-1
- 
-            call MPI_TEST(ir(nproc+m),flag,mpistat,ier) ! check receives
-            
+
+            ! check receives 
+            !call MPI_TEST(ir(nproc+m),flag,mpistat,ier) ! deallocated request 
+            call MPI_Request_get_status(ir(nproc+m),flag,mpistat,ier) ! non-destructive test
+      
             if (flag) then
                ! mpistat is only significant if message has been received (flag=.true.)?
+               !PRINT*,id,m,mpistat(MPI_SOURCE)
                if (m.ne.mpistat(MPI_SOURCE)) then
                   PRINT*,'why did this happen?',m,mpistat(MPI_SOURCE)
                   !STOP 
                endif
             else
                done = .false.
-               PRINT*,'not done yet'
+               !PRINT*,'not done yet'
             endif
 
          enddo
