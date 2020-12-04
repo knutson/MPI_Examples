@@ -1,4 +1,5 @@
 
+      ! linked-list format
 !      type, public :: part_t
 !         integer :: pid = 0       ! (global) particle index
 !         integer :: i = 0         ! local cell index that contains the particle
@@ -27,17 +28,14 @@
          real*8  :: tleft  = 0.0d0 ! ! remaining time until particle has moved dt
       end type
 
-      integer                       :: MPI_PART_XFT
-      !type(mpi_part_t), allocatable :: part_portal(:)
-      !type(mpi_part_t), allocatable :: sbuff(:),rbuff(:) ! don't need to be targets?
+      integer :: MPI_PART_XFT
 
       type(mpi_part_t), dimension(:), allocatable :: sbuf,rbuf
 
-
       integer :: iblk(2),idtp(2) 
-      INTEGER(KIND=MPI_ADDRESS_KIND) :: idis(2)
+      integer(kind=MPI_ADDRESS_KIND) :: idis(2)
 
-      TYPE(mpi_part_t) :: pdum(2)
+      type(mpi_part_t) :: pdum(2)
 
       integer :: k,r,s,i,itag,m
       integer :: icomw,id,ier,nproc
@@ -47,9 +45,12 @@
 
       integer :: my_nsend,my_nrecv
       integer, dimension(:), allocatable :: my_ps,my_pr
+      integer, dimension(:), allocatable :: sdis,rdis
 
       type(part_t), pointer :: pPtr
       type(part_t) :: item
+
+      !integer :: ib,ie
 
       call MPI_Init(ier)
 
@@ -60,8 +61,6 @@
 
       allocate(scounts(0:nproc-1),rcounts(0:nproc-1))
       !allocate(ir(0:2*nproc-1))
-
-      
 
       iblk = (/2, 7/) ! 2 integers, 7 (2*3+1) reals
      
@@ -77,22 +76,32 @@
       CALL MPI_TYPE_COMMIT(MPI_PART_XFT,ier)
 
       ! four processor example for now
-      if (nproc.ne.4) STOP
+      !if (nproc.ne.4) STOP
 
       ! send and receive buffer, oversized for now
       ! eventually fix size and do while particles remain to send or receive
       ! i.e. "particle packets"
-      !allocate(sbuff(MAX_NUM),rbuff(MAX_NUM))
 
       scounts = 0
       rcounts = 0
  
       if (id.eq.0) then
          scounts(1) = 3 ! send 3 particles to rank 1
+         scounts(3) = 9
+         scounts(6) = 2
       endif
 
-      ! START
-      
+      ! FILL DUMMY LINKED-LIST(S)
+      do i=1,sum(scounts)
+         item%pid = i
+         call insert_item(item)
+      enddo
+      !call print_list()
+
+      allocate(sbuf(sum(scounts)))
+
+
+ 
       ! improve by only sending/receiving
       ! between partition shared ranks
       call MPI_ALLTOALL(scounts,1,MPI_INTEGER, &
@@ -106,6 +115,7 @@
 
       my_nsend = 0
       my_nrecv = 0
+
       do m=0,nproc-1
          if (scounts(m).gt.0) my_nsend = my_nsend + 1
          if (rcounts(m).gt.0) my_nrecv = my_nrecv + 1
@@ -131,16 +141,34 @@
          endif
       enddo
 
-      if (id.eq.0) then
+!      allocate(sdis(my_nsend))
+!      allocate(rdis(my_nrecv))
 
-         do i=1,3
-            item%pid = i
-            call insert_item(item)
+      ! create displacement arrays (if there is anything to send/recv)
+      if (my_nsend>0) then
+         allocate(sdis(my_nsend))
+         sdis(1) = 0 
+         do k=2,my_nsend
+            sdis(k) = sdis(k-1) + scounts(my_ps(k-1))
          enddo
-
       endif
 
-      !call print_list()
+      if (my_nrecv>0) then
+         allocate(rdis(my_nrecv))
+         rdis(1) = 0
+         do k=2,my_nrecv
+            rdis(k) = rdis(k-1) + rcounts(my_pr(k-1))
+         enddo
+      endif
+
+!      do k=1,my_nsend
+!         m = my_ps(k)
+!         ib = sdis(k)+1
+!         ie = ib + scounts(m) - 1
+!      enddo
+
+      ! start at the head of the linked-list
+      if (associated(head)) pPtr => head
 
       do k=1,my_nsend
          m = my_ps(k)
@@ -151,32 +179,35 @@
          PRINT*,'rank',id,'sending',scounts(m),'particles to rank',m
 #endif
 
-         if (allocated(sbuf)) deallocate(sbuf)
-         allocate(sbuf(scounts(m)))
-
          ! copy from link-list to send buffer
          ! loop though linked-list, copy items, then delete
          ! eventually do it item-by-item
 
-         i = 0
-         if (associated(head)) then
-            pPtr => head
-            do while (associated(pPtr))
-               i = i + 1
-               sbuf(i)%pid = pPtr%pid
-               pPtr => pPtr%next
-            enddo
-         endif
-         if (i.ne.scounts(m)) STOP
+         ! traverse the linked-list
+         do i=1,scounts(m)
+            sbuf(sdis(k)+i)%pid = pPtr%pid
+            pPtr => pPtr%next
+         enddo
 
-         call MPI_SEND(sbuf(1),scounts(m),MPI_PART_XFT, &
+!         if (associated(head)) then
+!            pPtr => head
+!            do while (associated(pPtr))
+!               i = i + 1
+!               sbuf(i)%pid = pPtr%pid
+!               pPtr => pPtr%next
+!            enddo
+!         endif
+
+         call MPI_SEND(sbuf(sdis(k)+1),scounts(m),MPI_PART_XFT, &
                        m,itag,icomw,ier)
 
-         do i=1,scounts(m)
-            PRINT*,sbuf(i)%pid
-         enddo 
+         !do i=1,scounts(m)
+         !   PRINT*,sbuf(i)%pid
+         !enddo 
 
       enddo
+
+      !allocate(rbuf(maxval(rcounts))) ! re-use
 
       do k=1,my_nrecv
          m = my_pr(k)
@@ -188,13 +219,13 @@
 #endif
 
          if (allocated(rbuf)) deallocate(rbuf)
-         allocate(rbuf(rcounts(m))) 
+         allocate(rbuf(rcounts(m)))
 
-         call MPI_RECV(rbuf(1),rcounts(m),MPI_PART_XFT, &
+         call MPI_RECV(rbuf(rdis(k)+1),rcounts(m),MPI_PART_XFT, &
                        m,itag,icomw,mpistat,ier)
 
          do i=1,rcounts(m)
-            PRINT*,rbuf(i)%pid
+            PRINT*,id,'|',rbuf(i)%pid
          enddo 
 
       enddo
@@ -208,95 +239,3 @@
     
       end program
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-!      ict = sum(scounts) + sum(rcounts)
-!
-!      ! do while particles remain to send or receive
-!      do while (ict.gt.0)
-! 
-!         ! loop over peers to send, m
-!         do n=1,n_peers 
-!   
-!            m = my_peers(n)
-!
-!            ! if (communication of packet to peer m was completed
-             !     AND I still have particles to send to m (scount(m).gt.0?) ) then 
-
-!            ! copy data from linked-list to send buffer for peer m
-!
-!            ! TESTING
-!            sbuff(:)%pid = 0 
-!            do i=1,bsize !scounts(m)
-!               sbuff(i)%pid = i
-!            enddo
-!
-!            itag = 1000 + m ! constant + id of receiver
-!
-!            !if (id.eq.0) PRINT*,'sending from ' 
-!
-!            call MPI_SEND(sbuff(1),bsize,MPI_PART_XFT, &
-!                          m,itag,icomw,ier)
-!
-!            ! reduce send count
-!            scounts(m) = max(0,scounts(m)-bsize)
-! 
-!            ! immediately clear send buffer for testing
-!            sbuff(:)%pid = 0
-!   
-!   !         call MPI_ISEND(part_portal(1),scount(m),MPI_PART_XFT, &
-!   !                        m,itag,icomw,ir(m),ier)
-!   
-!         enddo
-!   
-!      ! loop over peers from which to receive, n
-!
-!      do n=1,n_peers
-!
-!         m = my_peers(n)
-!
-!         itag = 1000 + id ! constant + id of receiver (me)
-!
-!
-!         call MPI_RECV(rbuff(1),bsize,MPI_PART_XFT, &
-!                       m,itag,icomw,mpistat,ier)
-!
-!         
-!!         if (rcounts(m).gt.0) then
-!!            PRINT*,'rank',id,'received the following',rcounts(m),'items from rank',m,':'
-!!            !do i=1,rcounts(m)
-!!            !   PRINT*,rbuff(i)%pid
-!!            !enddo
-!!         endif
-!
-!         rcounts(m) = max(0,rcounts(m)-bsize)
-!
-!      enddo
-!
-!         ! recompute total count
-!         ict = sum(scounts) + sum(rcounts)
-!
-!      enddo     
