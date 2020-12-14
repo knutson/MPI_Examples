@@ -1,5 +1,5 @@
 
-! TODO: add a routine to assign new particle GIDs
+! TODO: add a routine to assign new particle GIDs?
 !       add particle diameter, temperature, density?
 !       make doubly linked list
 !       make particles an array (sized to number of cells)
@@ -8,8 +8,9 @@
 
       implicit none
       type, public :: part_t
-         integer :: pid = 0       ! (global) particle index
-         integer :: i = 0         ! local cell index that contains the particle
+         integer :: pid   = -1    ! particle index
+         integer :: id    = -1    ! rank which owns the cell containing the particle
+         integer :: i     = -1    ! local cell index that contains the particle
          real*8 :: xyz(3) = 0.0d0 ! particle position
          real*8 :: uvw(3) = 0.0d0 ! particle velocity
          real*8 :: tleft  = 0.0d0 ! remaining time until particle has moved dt 
@@ -40,7 +41,11 @@
       if (.not.associated(head)) then ! list is empty, make item the head
          allocate(particles%p)
          head => particles%p
+ 
+         ! COPY ITEMS
          head%pid = item%pid
+         head%id  = item%id 
+
       else
 
          pPtr => head
@@ -62,7 +67,10 @@
 
          allocate(pPtr%next)
          pPtr => pPtr%next
+
+         ! COPY ITEMS
          pPtr%pid = item%pid
+         pPtr%id  = item%id
 
       endif
 
@@ -81,6 +89,22 @@
       ms = values(8)
       wtime = dble( 3600*h + 60*m + s ) + dble(ms)/1000.0d0
       end function 
+
+      function get_count() result (c)
+      implicit none
+      type(part_t), pointer :: pPtr
+      integer :: c
+
+      c = 0
+      if (associated(head)) then
+         pPtr => head
+         do while (associated(pPtr))
+            c = c + 1
+            pPtr => pPtr%next
+         enddo
+      endif
+
+      end function
 
       subroutine print_list
       implicit none

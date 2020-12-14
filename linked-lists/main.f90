@@ -21,7 +21,7 @@
       !integer, parameter :: bsize = 2 ! fixed buffer size
 
       type :: mpi_part_t
-         integer :: pid = 0        ! particle index
+         integer :: pid = 0        
          integer :: i = 0          ! local cell index that contains the particle
          real*8  :: xyz(3) = 0.0d0 ! particle position
          real*8  :: uvw(3) = 0.0d0 ! particle velocity
@@ -59,7 +59,7 @@
       call MPI_Comm_rank(icomw,id,ier)
       call MPI_Comm_size(icomw,nproc,ier)
 
-      allocate(scounts(0:nproc-1),rcounts(0:nproc-1))
+      allocate(scounts(0:nproc-1),rcounts(0:nproc-1)) ! over-sized for now
       !allocate(ir(0:2*nproc-1))
 
       iblk = (/2, 7/) ! 2 integers, 7 (2*3+1) reals
@@ -82,21 +82,52 @@
       ! eventually fix size and do while particles remain to send or receive
       ! i.e. "particle packets"
 
+
+
       scounts = 0
       rcounts = 0
  
+      ! FILL LINKED-LIST(S)
       if (id.eq.0) then
-         scounts(1) = 3 ! send 3 particles to rank 1
-         scounts(3) = 9
-         scounts(6) = 2
+
+         ! send 3 particles to rank 1
+         do i=1,3
+            item%id = 1
+            item%pid = i
+            call insert_item(item)
+         enddo
+        
+         ! send 9 particles to rank 3
+         do i=4,12
+            item%id = 3
+            item%pid = i 
+            call insert_item(item)
+         enddo
+
+         ! send 2 particles to rank 6
+         do i=13,14
+            item%id = 6
+            item%pid = i
+            call insert_item(item)
+         enddo
+
       endif
 
-      ! FILL DUMMY LINKED-LIST(S)
-      do i=1,sum(scounts)
-         item%pid = i
-         call insert_item(item)
-      enddo
       !call print_list()
+      !PRINT*,'size of linked-list owned by id',id,'=',get_count()
+
+      ! determine send counts by traversing linked-list and counting
+      if (associated(head)) then
+         pPtr => head
+         do while (associated(pPtr))
+            ! for now, we are not sending to ourself
+            if (pPtr%id.ne.id) scounts(pPtr%id) = scounts(pPtr%id) + 1
+            pPtr => pPtr%next
+         enddo
+      endif       
+
+      !PRINT*,scounts
+      !stop
 
       allocate(sbuf(sum(scounts)))
 
@@ -168,9 +199,14 @@
 !      enddo
 
       ! start at the head of the linked-list
-      if (associated(head)) pPtr => head
+!      if (associated(head)) pPtr => head
+
+      ! sanity check
+      !if (.not.associated(head) .and. my_nsend.ne.0) STOP 'WHY?'
+       
 
       do k=1,my_nsend
+
          m = my_ps(k)
 
          itag = 1000 + m
@@ -179,24 +215,26 @@
          PRINT*,'rank',id,'sending',scounts(m),'particles to rank',m
 #endif
 
-         ! copy from link-list to send buffer
-         ! loop though linked-list, copy items, then delete
-         ! eventually do it item-by-item
+#ifdef _DEBUG_
+         if (.not.associated(head)) STOP 'Why is head not associated here?'
+#endif
 
-         ! traverse the linked-list
-         do i=1,scounts(m)
-            sbuf(sdis(k)+i)%pid = pPtr%pid
+         i = 0
+         pPtr => head
+         do while (associated(pPtr))
+
+            ! copy linked-list to send buffer
+            if (pPtr%id.eq.m) then
+               i = i + 1
+               sbuf(sdis(k)+i)%pid = pPtr%pid
+            endif
+
             pPtr => pPtr%next
          enddo
 
-!         if (associated(head)) then
-!            pPtr => head
-!            do while (associated(pPtr))
-!               i = i + 1
-!               sbuf(i)%pid = pPtr%pid
-!               pPtr => pPtr%next
-!            enddo
-!         endif
+#ifdef _DEBUG_
+         if (i.ne.scounts(m)) STOP 'WHY?'
+#endif
 
          call MPI_SEND(sbuf(sdis(k)+1),scounts(m),MPI_PART_XFT, &
                        m,itag,icomw,ier)
@@ -207,7 +245,7 @@
 
       enddo
 
-      !allocate(rbuf(maxval(rcounts))) ! re-use
+      allocate(rbuf(sum(rcounts)))
 
       do k=1,my_nrecv
          m = my_pr(k)
@@ -218,22 +256,34 @@
          PRINT*,'rank',id,'receiving',rcounts(m),'particles from rank',m 
 #endif
 
-         if (allocated(rbuf)) deallocate(rbuf)
-         allocate(rbuf(rcounts(m)))
-
          call MPI_RECV(rbuf(rdis(k)+1),rcounts(m),MPI_PART_XFT, &
                        m,itag,icomw,mpistat,ier)
 
-         do i=1,rcounts(m)
-            PRINT*,id,'|',rbuf(i)%pid
-         enddo 
-
       enddo
+
+      ! note: rdis is not always zero
 
       ! here I know I am only sending from 0 to 1
       ! but eventually I will need to break up the
       ! linked-list and copy to the send buffer
       ! in packets, for different ranks 
+
+      !PRINT*,id,'|',size(rbuf)
+
+      ! TODO: clear linked-lists (of sent items only) --> how to best do this?
+
+
+      ! finally, copy receive buffer to linked-lists
+      do i=1,size(rbuf)
+         item%pid = rbuf(i)%pid
+         item%id = id ! I own this item now
+         call insert_item(item)
+         !PRINT*,id,'|',rbuf(i)%pid 
+      enddo
+
+      if (id.ne.0) then ! HACK
+         PRINT*,id,'|',get_count()
+      endif
 
       call MPI_Finalize(ier)
     
