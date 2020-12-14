@@ -15,7 +15,7 @@
          real*8 :: uvw(3) = 0.0d0 ! particle velocity
          real*8 :: tleft  = 0.0d0 ! remaining time until particle has moved dt 
          type(part_t), pointer :: next=>NULL()
-         !type(part_t), pointer :: prev=>NULL()
+         type(part_t), pointer :: prev=>NULL()
       end type
 
       type, public :: partlist_t
@@ -25,7 +25,7 @@
 
       !global
       type(part_t), pointer :: head=>null()
-      !type(part_t), pointer :: tail=>null()
+      type(part_t), pointer :: tail=>null()
 
       type(partlist_t) :: particles
       !type(partlist_t), allocatable :: part_lists(:)
@@ -46,11 +46,16 @@
          head%pid = item%pid
          head%id  = item%id 
 
-      else
+         tail => particles%p ! update the tail
+
+         !tail => head
+
+      else ! for now, add item at the end of the list
 
          pPtr => head
 
          ! check head
+
          if (pPtr%pid.eq.item%pid) then
             STOP 'Error: attempted to insert item that is already in the list!'
          endif
@@ -66,7 +71,14 @@
          enddo
 
          allocate(pPtr%next)
+       
+         pPtr%next%prev => pPtr ! Is this the best way to create a doubly linked-list? 
+
+         tail => pPtr%next ! update the tail
+
          pPtr => pPtr%next
+
+         !tail => pPtr
 
          ! COPY ITEMS
          pPtr%pid = item%pid
@@ -106,77 +118,94 @@
 
       end function
 
-      subroutine print_list
+      subroutine print_list(dir)
       implicit none
+      integer, intent(in) :: dir
       type(part_t), pointer :: pPtr 
 
-      if (.not.associated(head)) then
-         PRINT*,'List is empty!'
-      else
-         pPtr => head
-         do while (associated(pPtr))
-            write(6,*) pPtr%pid
-            pPtr => pPtr%next
-         enddo
-         !note: pPtr is not associated at this point
-      endif
-      !PRINT*
-
-      end subroutine
-
-      subroutine delete_item(pid)
-
-      implicit none
-      integer, intent(in) :: pid
-      type(part_t), pointer :: pPtr,dPtr
-      logical :: found
-
-      if (.not.associated(head)) then
-         PRINT*,'WARNING: cannot delete an item from an empty list!'
-         !STOP
-      else
-
-         if (head%pid.eq.pid) then ! we are deleting the first item
-
-            dPtr => head
-            head => head%next ! null if only 1 item in the list
-            deallocate(dPtr) ! CRUCIAL
-            particles%count = particles%count - 1
-
+      select case(dir)
+      case(+1) ! forward
+         if (.not.associated(head)) then
+            PRINT*,'List is empty!'
          else
-
-            found = .false.
+            write(6,*) 'forward linked-list:'
             pPtr => head
-            do while (associated(pPtr%next))         
-               if (pPtr%next%pid.eq.pid) then
-                  found = .true.
-                  exit
-               else
-                  pPtr => pPtr%next
-               endif
+            do while (associated(pPtr))
+               write(6,*) pPtr%pid
+               pPtr => pPtr%next
             enddo
-   
-            if (found) then
-               ! note: the item to be deleted is pPtr%next
-               dPtr => pPtr%next
-               if (.not.associated(pPtr%next%next)) then ! we are deleting the last item
-                  pPtr%next => null()
-                  !nullify( pPtr%next )
-               else
-                  pPtr%next => pPtr%next%next
-               endif
-               deallocate(dPtr) ! CRUCIAL
-               particles%count = particles%count - 1
-
-            else
-               PRINT*,'WARNING: Could not find item to delete!'
-            endif         
-
+            !note: pPtr is not associated at this point
          endif
-
-      endif
+      case(-1)
+         if (.not.associated(tail)) then
+            PRINT*,'List is empty!'
+         else
+            write(6,*) 'backward linked-list:'
+            pPtr => tail
+            do while (associated(pPtr))
+               write(6,*) pPtr%pid
+               pPtr => pPtr%prev
+            enddo
+         endif
+      case default
+         PRINT*,'WARNING: Cannot print linked-list in direction:',dir
+      end select
 
       end subroutine
+
+!      subroutine delete_item(pid)
+!
+!      implicit none
+!      integer, intent(in) :: pid
+!      type(part_t), pointer :: pPtr,dPtr
+!      logical :: found
+!
+!      if (.not.associated(head)) then
+!         PRINT*,'WARNING: cannot delete an item from an empty list!'
+!         !STOP
+!      else
+!
+!         if (head%pid.eq.pid) then ! we are deleting the first item
+!
+!            dPtr => head
+!            head => head%next ! null if only 1 item in the list
+!            deallocate(dPtr) ! CRUCIAL
+!            particles%count = particles%count - 1
+!
+!         else
+!
+!            found = .false.
+!            pPtr => head
+!            do while (associated(pPtr%next))         
+!               if (pPtr%next%pid.eq.pid) then
+!                  found = .true.
+!                  exit
+!               else
+!                  pPtr => pPtr%next
+!               endif
+!            enddo
+!   
+!            if (found) then
+!               ! note: the item to be deleted is pPtr%next
+!               dPtr => pPtr%next
+!               if (.not.associated(pPtr%next%next)) then ! we are deleting the last item
+!                  pPtr%next => null()
+!                  !nullify( pPtr%next )
+!               else
+!                  pPtr%next => pPtr%next%next
+!               endif
+!               deallocate(dPtr) ! CRUCIAL
+!               particles%count = particles%count - 1
+!
+!            else
+!               PRINT*,'WARNING: Could not find item to delete!'
+!            endif         
+!
+!         endif
+!
+!      endif
+!
+!      end subroutine
 
       end module
 
